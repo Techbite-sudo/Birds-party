@@ -7,37 +7,37 @@ type Symbol string
 
 const (
 	// Regular bird symbols
-	SymbolPurpleOwl  Symbol = "purple_owl"
-	SymbolGreenOwl   Symbol = "green_owl"
-	SymbolYellowOwl  Symbol = "yellow_owl"
-	SymbolBlueOwl    Symbol = "blue_owl"
-	SymbolRedOwl     Symbol = "red_owl"
-	
+	SymbolPurpleOwl Symbol = "purple_owl"
+	SymbolGreenOwl  Symbol = "green_owl"
+	SymbolYellowOwl Symbol = "yellow_owl"
+	SymbolBlueOwl   Symbol = "blue_owl"
+	SymbolRedOwl    Symbol = "red_owl"
+
 	// Special symbols
-	SymbolFreeGame   Symbol = "free_game"
-	
+	SymbolFreeGame Symbol = "free_game"
+
 	// Stage-cleared symbols (level-specific)
-	SymbolOrangeSlice Symbol = "orange_slice"  // Level 1 stage-cleared symbol
-	SymbolHoneyPot    Symbol = "honey_pot"     // Level 2 stage-cleared symbol
-	SymbolStrawberry  Symbol = "strawberry"    // Level 3 stage-cleared symbol
+	SymbolOrangeSlice Symbol = "orange_slice" // Level 1 stage-cleared symbol
+	SymbolHoneyPot    Symbol = "honey_pot"    // Level 2 stage-cleared symbol
+	SymbolStrawberry  Symbol = "strawberry"   // Level 3 stage-cleared symbol
 )
 
 // Game constants
 const (
 	MinBet = 10
-	
+
 	// Level requirements and grid sizes
 	Level1MinConnection = 4
 	Level2MinConnection = 5
 	Level3MinConnection = 6
-	
+
 	Level1GridSize = 4 // 4x4 = 16 positions
 	Level2GridSize = 5 // 5x5 = 25 positions
 	Level3GridSize = 6 // 6x6 = 36 positions
-	
+
 	// Progress requirements
 	StageProgressTarget = 15
-	
+
 	// Free spin settings
 	FreeSpinsAwarded = 10
 )
@@ -77,12 +77,12 @@ type GameState struct {
 		Amount     float64 `json:"amount"`
 		Multiplier int     `json:"multiplier"`
 	} `json:"bet"`
-	CurrentLevel     Level        `json:"currentLevel"`
-	GridSize        int          `json:"gridSize"` // Current grid dimensions (4, 5, or 6)
-	Grid            [][]string   `json:"grid"` // Dynamic grid size
-	StageProgress   int          `json:"stageProgress"` // Accumulated stage-cleared symbols (0-14)
-	GameMode        string       `json:"gameMode"` // "base" or "freeSpins"
-	FreeSpins       struct {
+	CurrentLevel  Level      `json:"currentLevel"`
+	GridSize      int        `json:"gridSize"`      // Current grid dimensions (4, 5, or 6)
+	Grid          [][]string `json:"grid"`          // Dynamic grid size
+	StageProgress int        `json:"stageProgress"` // Accumulated stage-cleared symbols (0-14)
+	GameMode      string     `json:"gameMode"`      // "base" or "freeSpins"
+	FreeSpins     struct {
 		Remaining    int     `json:"remaining"`
 		TotalAwarded int     `json:"totalAwarded"`
 		Multiplier   float64 `json:"multiplier"` // 1.0-5.0x random multiplier
@@ -222,43 +222,41 @@ var BetAmountToMultiplier = map[float64]int{
 
 // Symbol weights for random generation (global across all levels)
 var SymbolWeights = map[Symbol]float64{
-	// Regular bird symbols (~15.8% each = 95% total)
 	SymbolPurpleOwl: 0.2,
 	SymbolGreenOwl:  0.2,
 	SymbolYellowOwl: 0.2,
 	SymbolBlueOwl:   0.2,
 	SymbolRedOwl:    0.2,
 
-	// Special symbols (very rare, ~0.9% total)
-	SymbolFreeGame:     0.0001, // 0.5%
-	SymbolOrangeSlice:  0.0001, // 0.1%
-	SymbolHoneyPot:     0.0001, // 0.1%
-	SymbolStrawberry:   0.0001, // 0.1%
+	SymbolFreeGame:    0.0001, // 0.5%
+	SymbolOrangeSlice: 0.0001, // 0.1%
+	SymbolHoneyPot:    0.0001, // 0.1%
+	SymbolStrawberry:  0.0001, // 0.1%
 }
 
 // GetLevelSpecificWeights returns symbol weights for a specific level
 // Stage-cleared symbols only appear on their corresponding level
 func GetLevelSpecificWeights(level Level) map[Symbol]float64 {
 	weights := make(map[Symbol]float64)
-	
+
 	// Base weights for all levels
-	weights[SymbolPurpleOwl] = 0.185
-	weights[SymbolGreenOwl] = 0.185
-	weights[SymbolYellowOwl] = 0.185
-	weights[SymbolBlueOwl] = 0.185
-	weights[SymbolRedOwl] = 0.185
-	weights[SymbolFreeGame] = 0.05
-	
+	weights[SymbolPurpleOwl] = 0.2475
+	weights[SymbolGreenOwl] = 0.2475
+	weights[SymbolYellowOwl] = 0.2475
+	weights[SymbolBlueOwl] = 0.2475
+	weights[SymbolRedOwl] = 0.2475
+	weights[SymbolFreeGame] = 0.001 // much rarer(0.001) for testing 0.1 is okay
+
 	// Add level-specific stage-cleared symbol
 	switch level {
 	case Level1:
-		weights[SymbolOrangeSlice] = 0.025
+		weights[SymbolOrangeSlice] = 0.002 // much rarer(0.002) for testing 0.1 is okay
 	case Level2:
-		weights[SymbolHoneyPot] = 0.025
+		weights[SymbolHoneyPot] = 0.002 // much rarer(0.002) for testing 0.1 is okay
 	case Level3:
-		weights[SymbolStrawberry] = 0.025
+		weights[SymbolStrawberry] = 0.002 // much rarer(0.002) for testing 0.1 is okay
 	}
-	
+
 	return weights
 }
 
@@ -313,6 +311,6 @@ func IsStageClearedSymbol(symbol Symbol) bool {
 
 // IsRegularBirdSymbol checks if a symbol is a regular bird symbol (can form connections)
 func IsRegularBirdSymbol(symbol Symbol) bool {
-	return symbol == SymbolPurpleOwl || symbol == SymbolGreenOwl || 
-		   symbol == SymbolYellowOwl || symbol == SymbolBlueOwl || symbol == SymbolRedOwl
+	return symbol == SymbolPurpleOwl || symbol == SymbolGreenOwl ||
+		symbol == SymbolYellowOwl || symbol == SymbolBlueOwl || symbol == SymbolRedOwl
 }
