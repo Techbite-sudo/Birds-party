@@ -113,7 +113,7 @@ func (rg *RouteGroup) SpinHandler(c *fiber.Ctx) error {
 	}
 
 	// Reset cascade count for new spin
-	req.GameState.CascadeCount = 0
+	req.GameState.CascadeCount = 1
 	req.GameState.TotalWin = totalWinnings
 	req.GameState.LastConnections = connections
 	req.GameState.Cascading = len(connections) > 0
@@ -333,7 +333,7 @@ func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 	var connections []Connection
 	var totalWinnings float64
 
-	if req.GameState.CascadeCount > 1 && len(req.GameState.LastConnections) > 0 {
+	if req.GameState.CascadeCount >= 1 && len(req.GameState.LastConnections) > 0 {
 		// Remove previous connections and apply gravity
 		RemoveConnections(req.GameState.Grid, req.GameState.LastConnections)
 		ApplyGravity(req.GameState.Grid, req.GameState.CurrentLevel, r)

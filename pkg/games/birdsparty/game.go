@@ -305,22 +305,22 @@ func RemoveConnections(grid [][]string, connections []Connection) []Position {
 // ApplyGravity makes symbols fall down to fill empty spaces
 func ApplyGravity(grid [][]string, level Level, r *rand.Rand) {
 	gridSize := len(grid)
-
 	for x := 0; x < gridSize; x++ {
-		// Move existing symbols down
-		writePos := gridSize - 1
+		// Step 1: Collect all non-empty symbols in this column (bottom to top)
+		stack := []string{}
 		for y := gridSize - 1; y >= 0; y-- {
 			if grid[y][x] != "" {
-				if y != writePos {
-					grid[writePos][x] = grid[y][x]
-					grid[y][x] = ""
-				}
-				writePos--
+				stack = append(stack, grid[y][x])
 			}
 		}
-
-		// Fill empty spaces at the top with new symbols
-		for y := 0; y <= writePos; y++ {
+		// Step 2: Place them at the bottom of the column
+		y := gridSize - 1
+		for _, symbol := range stack {
+			grid[y][x] = symbol
+			y--
+		}
+		// Step 3: Fill the remaining spaces at the top with new random symbols
+		for ; y >= 0; y-- {
 			grid[y][x] = string(WeightedRandomSymbol(level, r))
 		}
 	}
