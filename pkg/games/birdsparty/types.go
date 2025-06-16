@@ -146,14 +146,13 @@ type ProcessStageClearedResponse struct {
 }
 
 // CascadeResponse represents the response body for the /cascade endpoint
-// UPDATED: Now includes stage-cleared symbol detection
 type CascadeResponse struct {
 	Status              string               `json:"status"`
 	Message             string               `json:"message"`
 	GameState           GameState            `json:"gameState"`
 	Connections         []Connection         `json:"connections"`
-	StageClearedSymbols []StageClearedSymbol `json:"stageClearedSymbols"` // NEW: Detected stage-cleared symbols
-	HasStageCleared     bool                 `json:"hasStageCleared"`     // NEW: Flag indicating stage-cleared symbols found
+	StageClearedSymbols []StageClearedSymbol `json:"stageClearedSymbols"`
+	HasStageCleared     bool                 `json:"hasStageCleared"`
 	TotalCost           float64              `json:"totalCost"`
 }
 
