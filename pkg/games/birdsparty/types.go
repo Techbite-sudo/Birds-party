@@ -249,7 +249,7 @@ func GetLevelSpecificWeights(level Level) map[Symbol]float64 {
 	// Add level-specific stage-cleared symbol
 	switch level {
 	case Level1:
-		weights[SymbolOrangeSlice] = 0.002 // much rarer(0.002) for testing 0.1 is okay
+		weights[SymbolOrangeSlice] = 0.1 // much rarer(0.002) for testing 0.1 is okay
 	case Level2:
 		weights[SymbolHoneyPot] = 0.002 // much rarer(0.002) for testing 0.1 is okay
 	case Level3:
