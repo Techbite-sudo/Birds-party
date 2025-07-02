@@ -14,7 +14,7 @@ import (
 // Checks for regular bird symbol connections to determine cascading
 func (rg *RouteGroup) SpinHandler(c *fiber.Ctx) error {
 	rngClient, settingsClient := rg.getClientsForRequest(c)
-	
+
 	var req SpinRequest
 	if err := c.BodyParser(&req); err != nil {
 		log.Printf("Failed to parse request body: %v", err)
@@ -63,7 +63,7 @@ func (rg *RouteGroup) SpinHandler(c *fiber.Ctx) error {
 
 	// Check for regular bird symbol connections to determine if cascading will happen
 	connections := FindRegularConnections(req.GameState.Grid, req.GameState.CurrentLevel)
-	
+
 	// Calculate total winnings
 	totalWinnings := 0.0
 	for i, connection := range connections {
@@ -102,11 +102,11 @@ func (rg *RouteGroup) SpinHandler(c *fiber.Ctx) error {
 		if rngResp.PrefOutcome == "loss" {
 			log.Printf("RNG determined a loss outcome")
 			req.GameState.Grid = GenerateLossGrid(req.GameState.CurrentLevel, r)
-			
+
 			// Re-find stage-cleared symbols in loss grid
 			stageClearedSymbols = FindStageClearedSymbols(req.GameState.Grid, req.GameState.CurrentLevel)
 			req.GameState.StageClearedSymbols = stageClearedSymbols
-			
+
 			connections = nil
 			totalWinnings = 0
 		}
@@ -153,8 +153,8 @@ func (rg *RouteGroup) SpinHandler(c *fiber.Ctx) error {
 	// Determine if we have stage-cleared symbols
 	hasStageCleared := len(stageClearedSymbols) > 0
 
-	log.Printf("Spin completed: level=%d, gridSize=%dx%d, stageClearedSymbols=%d, hasStageCleared=%v, cascading=%v", 
-		req.GameState.CurrentLevel, req.GameState.GridSize, req.GameState.GridSize, 
+	log.Printf("Spin completed: level=%d, gridSize=%dx%d, stageClearedSymbols=%d, hasStageCleared=%v, cascading=%v",
+		req.GameState.CurrentLevel, req.GameState.GridSize, req.GameState.GridSize,
 		len(stageClearedSymbols), hasStageCleared, req.GameState.Cascading)
 
 	return c.JSON(SpinResponse{
@@ -173,7 +173,7 @@ func (rg *RouteGroup) SpinHandler(c *fiber.Ctx) error {
 // FIXED: Now preserves grid structure and uses surgical loss approach
 func (rg *RouteGroup) ProcessStageClearedHandler(c *fiber.Ctx) error {
 	rngClient, settingsClient := rg.getClientsForRequest(c)
-	
+
 	var req ProcessStageClearedRequest
 	if err := c.BodyParser(&req); err != nil {
 		log.Printf("Failed to parse request body: %v", err)
@@ -212,24 +212,61 @@ func (rg *RouteGroup) ProcessStageClearedHandler(c *fiber.Ctx) error {
 	}
 
 	stageClearedCount := len(stageClearedSymbols)
-	
+
 	// PRESERVE ORIGINAL GRID before processing
 	originalGrid := make([][]string, len(req.GameState.Grid))
 	for i := range req.GameState.Grid {
 		originalGrid[i] = make([]string, len(req.GameState.Grid[i]))
 		copy(originalGrid[i], req.GameState.Grid[i])
 	}
-	
-	// Process stage-cleared symbols (remove, apply gravity, check level advancement)
-	levelAdvanced, oldLevel, newLevel := ProcessStageClearedSymbolsSurgical(
-		&req.GameState, stageClearedSymbols, req.GameState.CurrentLevel, r)
 
+	// Prepare variables for level advancement
+	var (
+		levelAdvanced bool
+		oldLevel      = req.GameState.CurrentLevel
+		newLevel      = req.GameState.CurrentLevel
+	)
+
+	// Process stage-cleared symbols (remove, apply gravity, check level advancement)
+	var newPositions []Position
+	{
+		// Remove stage-cleared symbols from grid surgically
+		RemoveStageClearedSymbolsSurgical(req.GameState.Grid, stageClearedSymbols)
+		// Apply gravity surgically and get new positions
+		newPositions = ApplyGravitySurgical(req.GameState.Grid, stageClearedSymbols, req.GameState.CurrentLevel, r)
+		// Update stage progress
+		req.GameState.StageProgress += len(stageClearedSymbols)
+		log.Printf("Added %d stage-cleared symbols to progress, total: %d/15", len(stageClearedSymbols), req.GameState.StageProgress)
+		// Check for level advancement
+		if req.GameState.StageProgress >= StageProgressTarget {
+			newLevel = AdvanceLevel(oldLevel)
+			excessProgress := req.GameState.StageProgress - StageProgressTarget
+			UpdateGameStateForLevel(&req.GameState, newLevel)
+			req.GameState.StageProgress = excessProgress
+			req.GameState.Grid = GenerateGrid(newLevel, r)
+			levelAdvanced = true
+			log.Printf("Level advanced from %d to %d, excess progress: %d", oldLevel, newLevel, excessProgress)
+			// Clear stage-cleared symbols
+			req.GameState.StageClearedSymbols = []StageClearedSymbol{}
+			return c.JSON(ProcessStageClearedResponse{
+				Status:            "success",
+				Message:           "",
+				GameState:         req.GameState,
+				StageClearedCount: len(stageClearedSymbols),
+				LevelAdvanced:     levelAdvanced,
+				OldLevel:          oldLevel,
+				NewLevel:          newLevel,
+				Connections:       nil,
+				TotalCost:         0,
+			})
+		}
+	}
 	// Clear the stage-cleared symbols from game state since they've been processed
 	req.GameState.StageClearedSymbols = []StageClearedSymbol{}
 
 	// NOW check for regular bird symbol connections in the new grid after gravity
 	connections := FindRegularConnections(req.GameState.Grid, req.GameState.CurrentLevel)
-	
+
 	// Calculate total winnings
 	totalWinnings := 0.0
 	for i, connection := range connections {
@@ -268,24 +305,21 @@ func (rg *RouteGroup) ProcessStageClearedHandler(c *fiber.Ctx) error {
 		// SURGICAL LOSS: Adjust outcome based on RNG while preserving grid structure
 		if rngResp.PrefOutcome == "loss" {
 			log.Printf("RNG determined a loss outcome for stage-cleared processing")
-			
-			// Try surgical loss approach first
-			success := ApplySurgicalLoss(&req.GameState, originalGrid, stageClearedSymbols, req.GameState.CurrentLevel, r)
-			
+			// Try surgical loss approach first (only new positions)
+			success := ApplySurgicalLoss(&req.GameState, originalGrid, stageClearedSymbols, req.GameState.CurrentLevel, r, newPositions)
 			if !success {
 				// If surgical loss is impossible, bypass RNG and allow the win
 				log.Printf("⚠️  RNG BYPASS: Surgical loss impossible after stage-cleared processing - preserving natural outcome")
 				log.Printf("⚠️  GRID PRESERVATION: Maintaining grid structure as surgical loss would break game mechanics")
 				log.Printf("⚠️  REASON: Stage-cleared symbol removal at positions %+v made loss impossible", stageClearedSymbols)
 				rngBypassed = true
-				
 				// Keep the original connections and winnings
 				// Grid remains as it is after stage-cleared processing
 			} else {
 				// Surgical loss successful - remove connections
 				connections = nil
 				totalWinnings = 0
-				log.Printf("Surgical loss applied successfully after stage-cleared processing")
+				log.Printf("Surgical loss applied successfully after stage-cleared processing (new only)")
 			}
 		}
 	}
@@ -303,13 +337,13 @@ func (rg *RouteGroup) ProcessStageClearedHandler(c *fiber.Ctx) error {
 		req.GameState.CascadeCount = 0
 	}
 
-	logMessage := fmt.Sprintf("ProcessStageCleared completed: stageClearedCount=%d, levelAdvanced=%v, oldLevel=%d, newLevel=%d, progress=%d, cascading=%v", 
+	logMessage := fmt.Sprintf("ProcessStageCleared completed: stageClearedCount=%d, levelAdvanced=%v, oldLevel=%d, newLevel=%d, progress=%d, cascading=%v",
 		stageClearedCount, levelAdvanced, oldLevel, newLevel, req.GameState.StageProgress, req.GameState.Cascading)
-	
+
 	if rngBypassed {
 		logMessage += " [RNG BYPASSED - Surgical loss impossible]"
 	}
-	
+
 	log.Printf(logMessage)
 
 	return c.JSON(ProcessStageClearedResponse{
@@ -331,7 +365,7 @@ func (rg *RouteGroup) ProcessStageClearedHandler(c *fiber.Ctx) error {
 // FIXED: Now uses surgical cascade processing to preserve grid structure
 func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 	rngClient, settingsClient := rg.getClientsForRequest(c)
-	
+
 	var req CascadeRequest
 	if err := c.BodyParser(&req); err != nil {
 		log.Printf("Failed to parse request body: %v", err)
@@ -375,12 +409,13 @@ func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 	var connections []Connection
 	var totalWinnings float64
 	var affectedPositions []Position
+	var newPositions []Position
 
 	// Process cascade surgically
 	if req.GameState.CascadeCount >= 1 && len(req.GameState.LastConnections) > 0 {
 		// SURGICAL: Remove previous connections and apply gravity surgically
 		affectedPositions = RemoveConnectionsSurgical(req.GameState.Grid, req.GameState.LastConnections)
-		ApplyGravitySurgicalForCascade(req.GameState.Grid, affectedPositions, req.GameState.CurrentLevel, r)
+		newPositions = ApplyGravitySurgicalForCascade(req.GameState.Grid, affectedPositions, req.GameState.CurrentLevel, r)
 	} else {
 		// First cascade call - find existing connections
 		connections = FindRegularConnections(req.GameState.Grid, req.GameState.CurrentLevel)
@@ -389,9 +424,10 @@ func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 			for _, connection := range connections {
 				affectedPositions = append(affectedPositions, connection.Positions...)
 			}
+			newPositions = ApplyGravitySurgicalForCascade(req.GameState.Grid, affectedPositions, req.GameState.CurrentLevel, r)
 		}
 	}
-	
+
 	// Find regular bird symbol connections after cascade processing
 	if req.GameState.CascadeCount >= 1 || len(connections) == 0 {
 		connections = FindRegularConnections(req.GameState.Grid, req.GameState.CurrentLevel)
@@ -434,24 +470,24 @@ func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 		// SURGICAL LOSS: Adjust outcome based on RNG while preserving grid structure
 		if rngResp.PrefOutcome == "loss" {
 			log.Printf("RNG determined a loss outcome for cascade")
-			
-			// Try surgical loss approach first
-			success := ApplySurgicalLossForCascade(&req.GameState, originalGrid, affectedPositions, req.GameState.CurrentLevel, r)
-			
+
+			// Try surgical loss approach first (only new positions)
+			success := ApplySurgicalLossForCascade(&req.GameState, originalGrid, newPositions, req.GameState.CurrentLevel, r)
+
 			if !success {
 				// If surgical loss is impossible, bypass RNG and allow the win
 				log.Printf("⚠️  RNG BYPASS: Surgical loss impossible after cascade processing - preserving natural outcome")
 				log.Printf("⚠️  GRID PRESERVATION: Maintaining grid structure as surgical loss would break game mechanics")
 				log.Printf("⚠️  REASON: Cascade processing at %d positions made loss impossible", len(affectedPositions))
 				rngBypassed = true
-				
+
 				// Keep the original connections and winnings
 				// Grid remains as it is after cascade processing
 			} else {
 				// Surgical loss successful - remove connections
 				connections = nil
 				totalWinnings = 0
-				log.Printf("Surgical loss applied successfully after cascade processing")
+				log.Printf("Surgical loss applied successfully after cascade processing (new only)")
 			}
 		}
 	}
@@ -459,7 +495,7 @@ func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 	// IMPORTANT: After all processing, check for stage-cleared symbols that may have appeared
 	stageClearedSymbols := FindStageClearedSymbols(req.GameState.Grid, req.GameState.CurrentLevel)
 	hasStageCleared := len(stageClearedSymbols) > 0
-	
+
 	// Store stage-cleared symbols in game state for potential next call to process-stage-cleared
 	req.GameState.StageClearedSymbols = stageClearedSymbols
 
@@ -480,14 +516,14 @@ func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 	req.GameState.LastConnections = connections
 	req.GameState.Cascading = len(connections) > 0
 
-	logMessage := fmt.Sprintf("Cascade completed: level=%d, gridSize=%dx%d, totalWin=%.2f, cascading=%v, cascadeCount=%d, stageClearedDetected=%v", 
-		req.GameState.CurrentLevel, req.GameState.GridSize, req.GameState.GridSize, 
+	logMessage := fmt.Sprintf("Cascade completed: level=%d, gridSize=%dx%d, totalWin=%.2f, cascading=%v, cascadeCount=%d, stageClearedDetected=%v",
+		req.GameState.CurrentLevel, req.GameState.GridSize, req.GameState.GridSize,
 		totalWinnings, req.GameState.Cascading, req.GameState.CascadeCount, hasStageCleared)
-	
+
 	if rngBypassed {
 		logMessage += " [RNG BYPASSED - Surgical loss impossible]"
 	}
-	
+
 	log.Printf(logMessage)
 
 	return c.JSON(CascadeResponse{
@@ -495,8 +531,8 @@ func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 		Message:             "",
 		GameState:           req.GameState,
 		Connections:         connections,
-		StageClearedSymbols: stageClearedSymbols,  // Include detected stage-cleared symbols
-		HasStageCleared:     hasStageCleared,      // Flag to indicate stage-cleared symbols found
+		StageClearedSymbols: stageClearedSymbols, // Include detected stage-cleared symbols
+		HasStageCleared:     hasStageCleared,     // Flag to indicate stage-cleared symbols found
 		TotalCost:           0,
 	})
 }
