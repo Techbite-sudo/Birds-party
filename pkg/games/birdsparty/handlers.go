@@ -90,7 +90,12 @@ func (rg *RouteGroup) SpinHandler(c *fiber.Ctx) error {
 
 		// Call RNG
 		payoutMultiplier := totalWinnings / req.GameState.Bet.Amount
-		rngResp, err := rngClient.GetOutcome(req.ClientID, req.GameID, req.PlayerID, req.BetID, rtp, payoutMultiplier, req.GameState.Bet.Amount)
+		ip := c.IP()
+		userAgent := c.Get("User-Agent")
+
+		log.Printf("✅IP: %v", ip)
+		log.Printf("✅User-Agent: %v", userAgent)
+		rngResp, err := rngClient.GetOutcome(req.ClientID, req.GameID, req.PlayerID, req.BetID, rtp, payoutMultiplier, req.GameState.Bet.Amount, ip, userAgent)
 		if err != nil {
 			log.Printf("Failed to call RNG API: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -245,20 +250,51 @@ func (rg *RouteGroup) ProcessStageClearedHandler(c *fiber.Ctx) error {
 			excessProgress := req.GameState.StageProgress - StageProgressTarget
 			UpdateGameStateForLevel(&req.GameState, newLevel)
 			req.GameState.StageProgress = excessProgress
-			req.GameState.Grid = GenerateGrid(newLevel, r, false) // No free game in new level
+			// Generate new grid for the new level
+			req.GameState.Grid = GenerateGrid(newLevel, r, false) // `false` allows free game on first grid of new level
 			levelAdvanced = true
 			log.Printf("Level advanced from %d to %d, excess progress: %d", oldLevel, newLevel, excessProgress)
-			// Clear stage-cleared symbols
-			req.GameState.StageClearedSymbols = []StageClearedSymbol{}
+
+			// --- NEW: Analyze the brand new grid for wins, free spins, and special symbols ---
+			connections := FindRegularConnections(req.GameState.Grid, req.GameState.CurrentLevel)
+			stageClearedSymbolsAfterLevelUp := FindStageClearedSymbols(req.GameState.Grid, req.GameState.CurrentLevel)
+			req.GameState.StageClearedSymbols = stageClearedSymbolsAfterLevelUp
+
+			// Calculate winnings from the new grid
+			totalWinnings := 0.0
+			for i, connection := range connections {
+				payout := calculatePayout(connection.Symbol, connection.Count, req.GameState.CurrentLevel, req.GameState.Bet.Multiplier)
+				connections[i].Payout = payout
+				totalWinnings += payout
+			}
+
+			// Check for and trigger free spins on the new grid
+			freeGameCount := CountFreeGameSymbols(req.GameState.Grid)
+			if req.GameState.GameMode == "base" && freeGameCount > 0 {
+				req.GameState.GameMode = "freeSpins"
+				req.GameState.FreeSpins.Remaining = FreeSpinsAwarded
+				req.GameState.FreeSpins.TotalAwarded = FreeSpinsAwarded
+				req.GameState.FreeSpins.Multiplier = GetRandomFreeSpinMultiplier(r)
+				log.Printf("Free Spins triggered on new level with %.1fx multiplier", req.GameState.FreeSpins.Multiplier)
+				// Apply multiplier if free spins were just triggered
+				totalWinnings *= req.GameState.FreeSpins.Multiplier
+			}
+
+			// Update game state for the response
+			req.GameState.TotalWin = round(totalWinnings)
+			req.GameState.LastConnections = connections
+			req.GameState.Cascading = len(connections) > 0
+			req.GameState.CascadeCount = 0 // Reset for new level
+
 			return c.JSON(ProcessStageClearedResponse{
 				Status:            "success",
 				Message:           "",
 				GameState:         req.GameState,
-				StageClearedCount: len(stageClearedSymbols),
+				StageClearedCount: stageClearedCount,
 				LevelAdvanced:     levelAdvanced,
 				OldLevel:          oldLevel,
 				NewLevel:          newLevel,
-				Connections:       nil,
+				Connections:       connections, // New connections from the new grid
 				TotalCost:         0,
 			})
 		}
@@ -295,7 +331,12 @@ func (rg *RouteGroup) ProcessStageClearedHandler(c *fiber.Ctx) error {
 
 		// Call RNG
 		payoutMultiplier := totalWinnings / req.GameState.Bet.Amount
-		rngResp, err := rngClient.GetOutcome(req.ClientID, req.GameID, req.PlayerID, req.BetID, rtp, payoutMultiplier, req.GameState.Bet.Amount)
+		ip := c.IP()
+		userAgent := c.Get("User-Agent")
+
+		log.Printf("✅IP: %v", ip)
+		log.Printf("✅User-Agent: %v", userAgent)
+		rngResp, err := rngClient.GetOutcome(req.ClientID, req.GameID, req.PlayerID, req.BetID, rtp, payoutMultiplier, req.GameState.Bet.Amount, ip, userAgent)
 		if err != nil {
 			log.Printf("Failed to call RNG API: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
@@ -461,7 +502,12 @@ func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 
 		// Call RNG
 		payoutMultiplier := totalWinnings / req.GameState.Bet.Amount
-		rngResp, err := rngClient.GetOutcome(req.ClientID, req.GameID, req.PlayerID, req.BetID, rtp, payoutMultiplier, req.GameState.Bet.Amount)
+		ip := c.IP()
+		userAgent := c.Get("User-Agent")
+
+		log.Printf("✅IP: %v", ip)
+		log.Printf("✅User-Agent: %v", userAgent)
+		rngResp, err := rngClient.GetOutcome(req.ClientID, req.GameID, req.PlayerID, req.BetID, rtp, payoutMultiplier, req.GameState.Bet.Amount, ip, userAgent)
 		if err != nil {
 			log.Printf("Failed to call RNG API: %v", err)
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{

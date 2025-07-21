@@ -251,9 +251,9 @@ func GetLevelSpecificWeights(level Level) map[Symbol]float64 {
 	case Level1:
 		weights[SymbolOrangeSlice] = 0.002 // much rarer(0.002) for testing 0.1 is okay
 	case Level2:
-		weights[SymbolHoneyPot] = 0.002 // much rarer(0.002) for testing 0.1 is okay
+		weights[SymbolHoneyPot] = 0.1 // much rarer(0.002) for testing 0.1 is okay
 	case Level3:
-		weights[SymbolStrawberry] = 0.002 // much rarer(0.002) for testing 0.1 is okay
+		weights[SymbolStrawberry] = 0.1 // much rarer(0.002) for testing 0.1 is okay
 	}
 
 	return weights
