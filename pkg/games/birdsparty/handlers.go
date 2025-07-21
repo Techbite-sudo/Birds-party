@@ -55,7 +55,8 @@ func (rg *RouteGroup) SpinHandler(c *fiber.Ctx) error {
 	req.GameState.Bet.Multiplier = BetAmountToMultiplier[req.GameState.Bet.Amount]
 
 	// Generate grid with potential bird symbol connections
-	req.GameState.Grid = GenerateGridWithWin(req.GameState.CurrentLevel, r)
+	forbidFreeGame := req.GameState.GameMode == "freeSpins"
+	req.GameState.Grid = GenerateGridWithWin(req.GameState.CurrentLevel, r, forbidFreeGame)
 
 	// Find stage-cleared symbols (do NOT remove them yet)
 	stageClearedSymbols := FindStageClearedSymbols(req.GameState.Grid, req.GameState.CurrentLevel)
@@ -67,14 +68,14 @@ func (rg *RouteGroup) SpinHandler(c *fiber.Ctx) error {
 	// Calculate total winnings
 	totalWinnings := 0.0
 	for i, connection := range connections {
-		multiplier := 1.0
-		if req.GameState.GameMode == "freeSpins" {
-			multiplier = req.GameState.FreeSpins.Multiplier
-		}
-		connections[i].Payout = calculatePayout(connection.Symbol, connection.Count, req.GameState.CurrentLevel, req.GameState.Bet.Multiplier)
-		connections[i].Payout *= multiplier
-		totalWinnings += connections[i].Payout
+		payout := calculatePayout(connection.Symbol, connection.Count, req.GameState.CurrentLevel, req.GameState.Bet.Multiplier)
+		connections[i].Payout = payout // base payout, no multiplier
+		totalWinnings += payout
 	}
+	if req.GameState.GameMode == "freeSpins" {
+		totalWinnings *= req.GameState.FreeSpins.Multiplier
+	}
+	totalWinnings = round(totalWinnings)
 
 	// Get RTP and call RNG for bird symbol connections
 	if len(connections) > 0 {
@@ -101,7 +102,8 @@ func (rg *RouteGroup) SpinHandler(c *fiber.Ctx) error {
 		// Adjust outcome based on RNG
 		if rngResp.PrefOutcome == "loss" {
 			log.Printf("RNG determined a loss outcome")
-			req.GameState.Grid = GenerateLossGrid(req.GameState.CurrentLevel, r)
+			forbidFreeGame := req.GameState.GameMode == "freeSpins"
+			req.GameState.Grid = GenerateLossGrid(req.GameState.CurrentLevel, r, forbidFreeGame)
 
 			// Re-find stage-cleared symbols in loss grid
 			stageClearedSymbols = FindStageClearedSymbols(req.GameState.Grid, req.GameState.CurrentLevel)
@@ -233,7 +235,7 @@ func (rg *RouteGroup) ProcessStageClearedHandler(c *fiber.Ctx) error {
 		// Remove stage-cleared symbols from grid surgically
 		RemoveStageClearedSymbolsSurgical(req.GameState.Grid, stageClearedSymbols)
 		// Apply gravity surgically and get new positions
-		newPositions = ApplyGravitySurgical(req.GameState.Grid, stageClearedSymbols, req.GameState.CurrentLevel, r)
+		newPositions = ApplyGravitySurgical(req.GameState.Grid, stageClearedSymbols, req.GameState.CurrentLevel, r, req.GameState.GameMode == "freeSpins")
 		// Update stage progress
 		req.GameState.StageProgress += len(stageClearedSymbols)
 		log.Printf("Added %d stage-cleared symbols to progress, total: %d/15", len(stageClearedSymbols), req.GameState.StageProgress)
@@ -243,7 +245,7 @@ func (rg *RouteGroup) ProcessStageClearedHandler(c *fiber.Ctx) error {
 			excessProgress := req.GameState.StageProgress - StageProgressTarget
 			UpdateGameStateForLevel(&req.GameState, newLevel)
 			req.GameState.StageProgress = excessProgress
-			req.GameState.Grid = GenerateGrid(newLevel, r)
+			req.GameState.Grid = GenerateGrid(newLevel, r, false) // No free game in new level
 			levelAdvanced = true
 			log.Printf("Level advanced from %d to %d, excess progress: %d", oldLevel, newLevel, excessProgress)
 			// Clear stage-cleared symbols
@@ -270,14 +272,14 @@ func (rg *RouteGroup) ProcessStageClearedHandler(c *fiber.Ctx) error {
 	// Calculate total winnings
 	totalWinnings := 0.0
 	for i, connection := range connections {
-		multiplier := 1.0
-		if req.GameState.GameMode == "freeSpins" {
-			multiplier = req.GameState.FreeSpins.Multiplier
-		}
-		connections[i].Payout = calculatePayout(connection.Symbol, connection.Count, req.GameState.CurrentLevel, req.GameState.Bet.Multiplier)
-		connections[i].Payout *= multiplier
-		totalWinnings += connections[i].Payout
+		payout := calculatePayout(connection.Symbol, connection.Count, req.GameState.CurrentLevel, req.GameState.Bet.Multiplier)
+		connections[i].Payout = payout // base payout, no multiplier
+		totalWinnings += payout
 	}
+	if req.GameState.GameMode == "freeSpins" {
+		totalWinnings *= req.GameState.FreeSpins.Multiplier
+	}
+	totalWinnings = round(totalWinnings)
 
 	// Handle RNG for bird symbol connections (if any) with surgical loss approach
 	rngBypassed := false
@@ -415,7 +417,7 @@ func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 	if req.GameState.CascadeCount >= 1 && len(req.GameState.LastConnections) > 0 {
 		// SURGICAL: Remove previous connections and apply gravity surgically
 		affectedPositions = RemoveConnectionsSurgical(req.GameState.Grid, req.GameState.LastConnections)
-		newPositions = ApplyGravitySurgicalForCascade(req.GameState.Grid, affectedPositions, req.GameState.CurrentLevel, r)
+		newPositions = ApplyGravitySurgicalForCascade(req.GameState.Grid, affectedPositions, req.GameState.CurrentLevel, r, req.GameState.GameMode == "freeSpins")
 	} else {
 		// First cascade call - find existing connections
 		connections = FindRegularConnections(req.GameState.Grid, req.GameState.CurrentLevel)
@@ -424,7 +426,7 @@ func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 			for _, connection := range connections {
 				affectedPositions = append(affectedPositions, connection.Positions...)
 			}
-			newPositions = ApplyGravitySurgicalForCascade(req.GameState.Grid, affectedPositions, req.GameState.CurrentLevel, r)
+			newPositions = ApplyGravitySurgicalForCascade(req.GameState.Grid, affectedPositions, req.GameState.CurrentLevel, r, req.GameState.GameMode == "freeSpins")
 		}
 	}
 
@@ -434,15 +436,16 @@ func (rg *RouteGroup) CascadeHandler(c *fiber.Ctx) error {
 	}
 
 	// Calculate total winnings
+	totalWinnings = 0.0
 	for i, connection := range connections {
-		multiplier := 1.0
-		if req.GameState.GameMode == "freeSpins" {
-			multiplier = req.GameState.FreeSpins.Multiplier
-		}
-		connections[i].Payout = calculatePayout(connection.Symbol, connection.Count, req.GameState.CurrentLevel, req.GameState.Bet.Multiplier)
-		connections[i].Payout *= multiplier
-		totalWinnings += connections[i].Payout
+		payout := calculatePayout(connection.Symbol, connection.Count, req.GameState.CurrentLevel, req.GameState.Bet.Multiplier)
+		connections[i].Payout = payout // base payout, no multiplier
+		totalWinnings += payout
 	}
+	if req.GameState.GameMode == "freeSpins" {
+		totalWinnings *= req.GameState.FreeSpins.Multiplier
+	}
+	totalWinnings = round(totalWinnings)
 
 	// Handle RNG for bird symbol connections with surgical loss approach
 	rngBypassed := false
