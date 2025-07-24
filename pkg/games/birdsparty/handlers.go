@@ -249,9 +249,17 @@ func (rg *RouteGroup) ProcessStageClearedHandler(c *fiber.Ctx) error {
 			newLevel = AdvanceLevel(oldLevel)
 			excessProgress := req.GameState.StageProgress - StageProgressTarget
 			UpdateGameStateForLevel(&req.GameState, newLevel)
-			req.GameState.StageProgress = excessProgress
+
+			if oldLevel == Level3 {
+				req.GameState.StageProgress = 0 // Reset progress when looping from level 3 to 1
+			} else {
+				req.GameState.StageProgress = excessProgress // Carry over excess progress otherwise
+			}
+
 			// Generate new grid for the new level
-			req.GameState.Grid = GenerateGrid(newLevel, r, false) // `false` allows free game on first grid of new level
+			// Respect free spins mode - don't allow free game symbols during free spins
+			forbidFreeGame := req.GameState.GameMode == "freeSpins"
+			req.GameState.Grid = GenerateGrid(newLevel, r, forbidFreeGame)
 			levelAdvanced = true
 			log.Printf("Level advanced from %d to %d, excess progress: %d", oldLevel, newLevel, excessProgress)
 
